@@ -2,6 +2,13 @@
 #define _TASKSYS_H
 
 #include "itasksys.h"
+#include <vector>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
+#include <atomic>
+#include <queue>
+
 
 /*
  * TaskSystemSerial: This class is the student's implementation of a
@@ -27,6 +34,11 @@ class TaskSystemSerial: public ITaskSystem {
  */
 class TaskSystemParallelSpawn: public ITaskSystem {
     public:
+        std::thread* threads_pool;
+        int num_threads;
+        void threadRun(IRunnable* runnable, int num_total_tasks, std::mutex* m, int* curr_task);
+
+    public:
         TaskSystemParallelSpawn(int num_threads);
         ~TaskSystemParallelSpawn();
         const char* name();
@@ -44,6 +56,19 @@ class TaskSystemParallelSpawn: public ITaskSystem {
  */
 class TaskSystemParallelThreadPoolSpinning: public ITaskSystem {
     public:
+        std::vector<std::thread> threads_pool_;
+        std::atomic<int> task_remained_;
+        std::queue<int> task_queue;
+        std::mutex mutex_;
+
+        IRunnable* my_runnable_;
+
+        int num_total_tasks_;
+        bool killed_;
+        void spinningThread();
+
+    
+    public:
         TaskSystemParallelThreadPoolSpinning(int num_threads);
         ~TaskSystemParallelThreadPoolSpinning();
         const char* name();
@@ -60,6 +85,23 @@ class TaskSystemParallelThreadPoolSpinning: public ITaskSystem {
  * itasksys.h for documentation of the ITaskSystem interface.
  */
 class TaskSystemParallelThreadPoolSleeping: public ITaskSystem {
+    public:
+        std::vector<std::thread> threads_pool_;
+        std::queue<int> task_queue;
+
+        std::mutex queue_mutex_;
+        std::mutex count_mutex_;
+        
+        std::condition_variable queue_cond_;
+        std::condition_variable count_cond_; 
+
+        IRunnable* my_runnable_;
+        int num_total_tasks_;
+        bool killed_;
+        int task_remained_;
+
+        void sleepingThread();
+
     public:
         TaskSystemParallelThreadPoolSleeping(int num_threads);
         ~TaskSystemParallelThreadPoolSleeping();
