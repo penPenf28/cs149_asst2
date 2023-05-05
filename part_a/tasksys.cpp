@@ -287,12 +287,10 @@ void TaskSystemParallelThreadPoolSleeping::run(IRunnable* runnable, int num_tota
     killed_ = false;
     task_remained_ = num_total_tasks;
 
-
-    std::unique_lock<std::mutex> lock2(queue_mutex_);
     for(int i=0;i<num_total_tasks_;++i){
+        std::unique_lock<std::mutex> lock2(queue_mutex_);
         task_queue.push(i);
     }
-    lock2.unlock();
     queue_cond_.notify_all();
 
     while(true){
