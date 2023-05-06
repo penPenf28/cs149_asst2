@@ -1,4 +1,6 @@
 #include "tasksys.h"
+#include <iostream>
+#include <algorithm>
 
 
 IRunnable::~IRunnable() {}
@@ -133,6 +135,12 @@ TaskSystemParallelThreadPoolSleeping::TaskSystemParallelThreadPoolSleeping(int n
     // Implementations are free to add new class member variables
     // (requiring changes to tasksys.h).
     //
+    killed_ = false;
+    num_threads_ = num_threads;
+    current_taskid = 0;
+    for(int i=0;i<num_threads;++i)
+        threads.emplace_back(&TaskSystemParallelThreadPoolSleeping::worker_thread,this);
+
 }
 
 TaskSystemParallelThreadPoolSleeping::~TaskSystemParallelThreadPoolSleeping() {
@@ -142,6 +150,11 @@ TaskSystemParallelThreadPoolSleeping::~TaskSystemParallelThreadPoolSleeping() {
     // Implementations are free to add new class member variables
     // (requiring changes to tasksys.h).
     //
+    killed_ = true;
+    task_queue_cond_.notify_all();
+    for(auto &t:threads){
+        t.join();
+    }
 }
 
 void TaskSystemParallelThreadPoolSleeping::run(IRunnable* runnable, int num_total_tasks) {
@@ -152,10 +165,9 @@ void TaskSystemParallelThreadPoolSleeping::run(IRunnable* runnable, int num_tota
     // method in Parts A and B.  The implementation provided below runs all
     // tasks sequentially on the calling thread.
     //
-
-    for (int i = 0; i < num_total_tasks; i++) {
-        runnable->runTask(i, num_total_tasks);
-    }
+    runAsyncWithDeps(runnable, num_total_tasks, {});
+    sync();
+    return;
 }
 
 TaskID TaskSystemParallelThreadPoolSleeping::runAsyncWithDeps(IRunnable* runnable, int num_total_tasks,
@@ -165,12 +177,40 @@ TaskID TaskSystemParallelThreadPoolSleeping::runAsyncWithDeps(IRunnable* runnabl
     //
     // TODO: CS149 students will implement this method in Part B.
     //
+    if(deps.size()==0)
+        task_dep_map_[current_taskid];
 
-    for (int i = 0; i < num_total_tasks; i++) {
-        runnable->runTask(i, num_total_tasks);
+    for(auto dep:deps){
+        task_dep_map_[current_taskid].insert(dep);
     }
+    task_group_map_[current_taskid] = new TaskGroup(current_taskid, runnable, num_total_tasks);
+    return current_taskid++;
+}
 
-    return 0;
+void TaskSystemParallelThreadPoolSleeping::scanForReadyTasks(){
+    for(auto it = task_dep_map_.begin();it!=task_dep_map_.end();){
+        auto tasks = it->second;
+        if(tasks.empty()){
+            TaskGroup* t = task_group_map_[it->first];
+            task_remained_map_[t->id] = t->num_total_tasks;
+            task_queue_mutex_.lock();
+            for(int i=0;i<t->num_total_tasks;++i){
+                task_queue_.push_back(new RunnableTask(t->id, i, t->runnable, t->num_total_tasks));
+            }
+            task_queue_mutex_.unlock();
+            task_queue_cond_.notify_all();
+            it = task_dep_map_.erase(it);
+        }
+        else{
+            ++it;
+        }
+    }
+}
+
+void TaskSystemParallelThreadPoolSleeping::removeTaskIDFromDependency(TaskID finished_task){
+    for(auto it = task_dep_map_.begin();it!=task_dep_map_.end();++it){
+        it->second.erase(finished_task);
+    }
 }
 
 void TaskSystemParallelThreadPoolSleeping::sync() {
@@ -178,6 +218,66 @@ void TaskSystemParallelThreadPoolSleeping::sync() {
     //
     // TODO: CS149 students will modify the implementation of this method in Part B.
     //
+    scanForReadyTasks();
+    bool done=false;
+    while(!done){
+        std::unique_lock<std::mutex> finished_lock(finished_task_mutex_);
+        finished_task_cond_.wait(finished_lock,[&]{return !finished_task_queue_.empty();});
 
-    return;
+        bool has_more_finished_task = true;
+        while(has_more_finished_task){
+            auto task_done_id = finished_task_queue_.front();
+            finished_task_queue_.pop_front();
+            task_remained_map_.erase(task_remained_map_.find(task_done_id));
+            finished_lock.unlock();
+
+            removeTaskIDFromDependency(task_done_id);
+
+            finished_lock.lock();
+            has_more_finished_task = !finished_task_queue_.empty();
+        }
+
+        finished_lock.unlock();
+
+        scanForReadyTasks();
+
+        finished_task_mutex_.lock();
+        done = task_dep_map_.empty() && task_remained_map_.empty();
+        finished_task_mutex_.unlock();
+
+    }
+}
+
+void TaskSystemParallelThreadPoolSleeping::worker_thread(){
+    while(!killed_){
+
+        while(true){
+            std::unique_lock<std::mutex> task_queue_lock(task_queue_mutex_);
+            task_queue_cond_.wait(task_queue_lock, [&]{return killed_ || !task_queue_.empty();});
+
+            if(task_queue_.empty()){
+                task_queue_lock.unlock();
+                break;
+            }
+
+            auto task = task_queue_.front();
+            task_queue_.pop_front();
+            task_queue_lock.unlock();
+
+            task->runnable->runTask(task->current_task, task->num_total_tasks);
+
+            finished_task_mutex_.lock();
+            task_remained_map_[task->id]--;
+            if(task_remained_map_[task->id]<=0){
+                finished_task_queue_.push_back(task->id);
+                finished_task_mutex_.unlock();
+
+                finished_task_cond_.notify_all();
+            }
+            else{
+                finished_task_mutex_.unlock();
+            }
+        }
+    }
+
 }

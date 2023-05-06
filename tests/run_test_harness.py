@@ -41,9 +41,9 @@ LIST_OF_IMPLEMENTATIONS_ORIG = [
 AUTHORS = ["STUDENT", "REFERENCE"]
 
 LIST_OF_IMPLEMENTATIONS = [
-    "[Serial]",
-    "[Parallel + Always Spawn]",
-    "[Parallel + Thread Pool + Spin]",
+    # "[Serial]",
+    # "[Parallel + Always Spawn]",
+    # "[Parallel + Thread Pool + Spin]",
     "[Parallel + Thread Pool + Sleep]",
 ]
 
